@@ -1,0 +1,47 @@
+{
+  "dependencies": {
+    "@prisma/adapter-pg": "^7.3.0",
+    "@prisma/client": "^7.3.0",
+    "@types/crypto-js": "^4.2.2",
+    "axios": "^1.13.4",
+    "axios-cookiejar-support": "^6.0.5",
+    "cors": "^2.8.6",
+    "crypto-js": "^4.2.0",
+    "dotenv": "^17.2.3",
+    "express": "^4.22.1",
+    "express-async-errors": "^3.1.1",
+    "node-cron": "^4.2.1",
+    "pg": "^8.18.0",
+    "puppeteer": "^24.36.1",
+    "swagger-jsdoc": "^6.2.8",
+    "swagger-ui-express": "^5.0.1",
+    "tough-cookie": "^6.0.0",
+    "xlsx": "^0.18.5"
+  },
+  "name": "rera-api",
+  "version": "1.0.0",
+  "main": "extract_auth_context.js",
+  "scripts": {
+    "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "set-token": "ts-node src/set-token.ts",
+    "prisma:generate": "prisma generate --schema=src/prisma/schema.prisma",
+    "prisma:push": "prisma db push --schema=src/prisma/schema.prisma"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/node": "^25.2.0",
+    "@types/pg": "^8.16.0",
+    "@types/swagger-jsdoc": "^6.0.4",
+    "@types/swagger-ui-express": "^4.1.8",
+    "prisma": "^7.3.0",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.9.3"
+  }
+}

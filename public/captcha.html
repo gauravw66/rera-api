@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MahaRERA Captcha Proxy</title>
+    <style>
+        body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; padding: 2rem; }
+        .card { border: 1px solid #ccc; padding: 1.5rem; border-radius: 8px; max-width: 400px; width: 100%; }
+        img { margin: 1rem 0; border: 1px solid #eee; }
+        input { width: 100%; padding: 0.5rem; margin-bottom: 1rem; box-sizing: border-box; }
+        button { width: 100%; padding: 0.75rem; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; }
+        #result { margin-top: 1rem; white-space: pre-wrap; font-family: monospace; font-size: 0.8rem; background: #f8f9fa; padding: 1rem; width: 100%; max-height: 400px; overflow-y: auto; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h2>MahaRERA Fetcher</h2>
+        <input type="text" id="reraNo" placeholder="Enter RERA No (e.g. P52100000432)">
+        <button onclick="search()">1. Search & Get Captcha</button>
+        
+        <div id="captchaArea" style="display:none;">
+            <img id="captchaImg" src="" alt="Captcha">
+            <input type="text" id="captchaText" placeholder="Enter Captcha">
+            <button onclick="fetchDetails()">2. Fetch Details</button>
+        </div>
+    </div>
+    <div id="result"></div>
+
+    <script>
+        let currentProjectId = '';
+        let currentReraNo = '';
+
+        async function search() {
+            const reraNo = document.getElementById('reraNo').value;
+            if (!reraNo) return alert('Please enter RERA No');
+            
+            try {
+                document.getElementById('result').innerText = 'Searching and initializing session...';
+                const res = await fetch(`/api/rera/search/${reraNo}`);
+                const project = await res.json();
+                
+                if (res.status !== 200) throw new Error(project.message || 'Search failed');
+                
+                currentProjectId = project.projectId;
+                currentReraNo = reraNo;
+                
+                // Show captcha
+                document.getElementById('captchaImg').src = `/api/rera/captcha?t=${Date.now()}`;
+                document.getElementById('captchaArea').style.display = 'block';
+                document.getElementById('result').innerText = 'Found project: ' + project.projectName;
+            } catch (err) {
+                document.getElementById('result').innerText = 'Error: ' + err.message;
+            }
+        }
+
+        async function fetchDetails() {
+            const captchaText = document.getElementById('captchaText').value;
+            if (!captchaText) return alert('Please enter captcha');
+
+            try {
+                document.getElementById('result').innerText = 'Fetching all details... this may take a few seconds...';
+                const res = await fetch('/api/rera/fetch', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        projectId: currentProjectId,
+                        reraNo: currentReraNo,
+                        captchaText: captchaText
+                    })
+                });
+                
+                const data = await res.json();
+                document.getElementById('result').innerText = JSON.stringify(data, null, 2);
+            } catch (err) {
+                document.getElementById('result').innerText = 'Error: ' + err.message;
+            }
+        }
+    </script>
+</body>
+</html>
