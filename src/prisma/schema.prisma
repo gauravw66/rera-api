@@ -14,6 +14,7 @@ model ReraProject {
   projectId    Int      @unique // Main ID
   projectName  String?
   rawResponses Json?
+  apiResponseJson Json?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
@@ -36,7 +37,7 @@ model ReraProject_General {
   projectStatusName String?
   projectCurrentStatus String?
   projectLocationName String?
-  registrationCertificateDmsRefNo String? @db.Uuid
+  registrationCertificateDMSRefNo String? @db.Uuid
   registrationCertificateFileName String?
   originalProjectProposeCompletionDate DateTime?
   registrationCertificateGenerationDate DateTime?
@@ -45,7 +46,7 @@ model ReraProject_General {
   isProjectAffiliatedPublicAuthority Boolean?
   projectAffiliatedPublicAuthorityName String?
   noOfConsent Int?
-  consentProofDmsRefNo String? @db.Uuid
+  consentProofDMSRefNo String? @db.Uuid
   consentProofFileName String?
   userName String?
   currentSaleCount Int?
@@ -62,11 +63,11 @@ model ReraProject_General {
   isMigrated Int?
   projectFeesPayableAmount Decimal?
   realEstateAgentRERARegNo String?
-  extensionCertificateDmsRefNo String? @db.Uuid
+  extensionCertificateDMSRefNo String? @db.Uuid
   extensionCertificateFileName String?
   moduleName String?
   projectCalculatedGrossFeesApplicable Decimal?
-  receiptDmsRefNo String? @db.Uuid
+  receiptDMSRefNo String? @db.Uuid
   receiptFileName String?
   projectFormSummaryId Int?
   isPromoter Boolean?
@@ -191,8 +192,8 @@ model ReraPromoter_SPOC {
   designation String?
   companyEntityName String?
   panNumber String?
-  photographDmsRefNo String?
-  photographDmsFileName String?
+  photographDMSRefNo String?
+  photographDMSFileName String?
   mobileNumber String?
   alternateMobileNumber String?
   emailId String?
@@ -212,7 +213,7 @@ model ReraPromoter_SPOC {
   districtName String?
   talukaName String?
   villageName String?
-  proofDocDmsRefNo String?
+  proofDocDMSRefNo String?
   proofDocFileName String?
   officeLandlineNumber String?
   isAuthorizedFormB Int?
@@ -290,11 +291,11 @@ model ReraCC_Documents {
   ccIssuedEntityName String?
   ccIssuedDate DateTime?
   ccIssuedTo String?
-  ccDocumentDmsRefNo String? @db.Uuid
+  ccDocumentDMSRefNo String? @db.Uuid
   ccDocumentFileName String?
   isCcYearOld Boolean?
   additionalCcDocumentTypeId Int?
-  additionalCcDocumentDmsRefNo String? @db.Uuid
+  additionalCcDocumentDMSRefNo String? @db.Uuid
   additionalCcDocumentFileName String?
   uploadDate DateTime?
   createdBy String?
@@ -452,7 +453,7 @@ model ReraUploaded_Documents {
   authorizedSignatoryName String?
   certificateDate DateTime?
   issuingAuthority String?
-  documentDmsRefNo String? @db.Uuid
+  documentDMSRefNo String? @db.Uuid
   documentFileName String?
   currentUpdateMode Int?
   isActive Int?

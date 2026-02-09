@@ -94,7 +94,7 @@ export class ReraController {
       if (error.response?.status === 404) {
         return res.status(404).json({ 
           message: 'Project not found', 
-          error: 'No project found with the given RERA number.' 
+          error: 'No project found with the given project ID.' 
         });
       }
       
@@ -111,41 +111,22 @@ export class ReraController {
   static async getProjectAuto(req: Request, res: Response) {
     const { reraNo, projectId } = req.body;
     
-    if (!reraNo && !projectId) {
+    if (!projectId) {
       return res.status(400).json({ 
-        message: 'Either reraNo or projectId is required',
+        message: 'projectId is required',
         example: {
-          reraNo: 'P52100000001',
-          projectId: '41789'
+          projectId: 3416,
+          reraNo: 'P52100000432'
         }
       });
     }
 
     try {
       // Token is already set by TokenRefreshService, no need to set it here
-      let targetProjectId = projectId;
-      let targetReraNo = reraNo || 'Unknown';
+      const targetProjectId = String(projectId);
+      const targetReraNo = reraNo;
 
-      // If projectId is not provided, we must search by reraNo
-      if (!targetProjectId) {
-        console.log(`[AUTO] Searching for project with RERA number: ${reraNo}`);
-        
-        // First, search for the project to get the projectId
-        const searchResult = await ReraService.searchByReraNo(reraNo);
-        
-        if (!searchResult || !searchResult.projectId) {
-          // If search fails, throw specific error
-          throw {
-            response: { status: 404 },
-            message: 'Project not found with the given RERA number (Search step failed)'
-          };
-        }
-        
-        targetProjectId = searchResult.projectId;
-        console.log(`[AUTO] Found project ID from search: ${targetProjectId}`);
-      } else {
-        console.log(`[AUTO] Using provided Project ID: ${targetProjectId}`);
-      }
+      console.log(`[AUTO] Using provided Project ID: ${targetProjectId}`);
 
       console.log(`[AUTO] Fetching details for Project ID: ${targetProjectId}`);
 
@@ -178,6 +159,51 @@ export class ReraController {
       res.status(500).json({ 
         message: 'Error fetching project details', 
         error: error.message 
+      });
+    }
+  }
+
+  /**
+   * Proxy download for MahaRERA DMS documents
+   */
+  static async downloadDocument(req: Request, res: Response) {
+    const { documentId, fileName } = req.body;
+
+    if (!documentId || typeof documentId !== 'string') {
+      return res.status(400).json({
+        message: 'documentId is required',
+        example: {
+          documentId: '61618a44-58ac-4dba-a5f4-66b548ceb3ae',
+          fileName: 'Pan card.pdf'
+        }
+      });
+    }
+
+    try {
+      const client = await SessionManager.getClient();
+      const response = await client.post(
+        'https://maharerait.maharashtra.gov.in/api/maha-rera-dms-service/batch-job/downloadDocumentForPublicView',
+        {
+          documentId,
+          fileName
+        },
+        {
+          responseType: 'arraybuffer'
+        }
+      );
+
+      const contentType = response.headers['content-type'] || 'application/octet-stream';
+      res.setHeader('Content-Type', contentType);
+      if (fileName) {
+        res.setHeader('Content-Disposition', `inline; filename="${fileName}"`);
+      }
+      res.send(Buffer.from(response.data));
+    } catch (error: any) {
+      console.error('[DMS] Error downloading document:', error.message);
+      const status = error.response?.status || 500;
+      res.status(status).json({
+        message: 'Error downloading document',
+        error: error.message
       });
     }
   }

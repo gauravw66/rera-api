@@ -12,111 +12,6 @@ const router = Router();
 
 /**
  * @swagger
- * /api/rera/search/{reraNo}:
- *   get:
- *     summary: Search for a project by RERA number
- *     tags: [RERA]
- *     parameters:
- *       - in: path
- *         name: reraNo
- *         schema:
- *           type: string
- *         required: true
- *         description: The RERA registration number
- *     responses:
- *       200:
- *         description: Project summary
- *       400:
- *         description: Valid RERA number is required
- */
-router.get('/search/:reraNo', ReraController.search);
-
-/**
- * @swagger
- * /api/rera/captcha:
- *   get:
- *     summary: Get a new captcha image
- *     tags: [RERA]
- *     responses:
- *       200:
- *         description: A PNG captcha image
- */
-router.get('/captcha', ReraController.getCaptcha);
-
-/**
- * @swagger
- * /api/rera/fetch:
- *   post:
- *     summary: Fetch full project details
- *     tags: [RERA]
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required:
- *               - projectId
- *               - reraNo
- *             properties:
- *               projectId:
- *                 type: string
- *                 description: Internal project ID
- *               reraNo:
- *                 type: string
- *                 description: RERA number
- *               captchaText:
- *                 type: string
- *                 description: Solved captcha text (only if token is not provided)
- *               token:
- *                 type: string
- *                 description: Bearer token (optional, bypasses captcha)
- *     responses:
- *       200:
- *         description: Full project details
- *       400:
- *         description: Missing required fields
- */
-router.post('/fetch', ReraController.fetchDetails);
-
-/**
- * @swagger
- * /api/rera/get:
- *   post:
- *     summary: Get project details using token and RERA number only
- *     tags: [RERA]
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required:
- *               - token
- *               - reraNo
- *             properties:
- *               token:
- *                 type: string
- *                 description: Bearer token for authentication
- *                 example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
- *               reraNo:
- *                 type: string
- *                 description: RERA registration number
- *                 example: "P52100000001"
- *     responses:
- *       200:
- *         description: Full project details
- *       400:
- *         description: Missing required fields (token or reraNo)
- *       404:
- *         description: Project not found
- *       500:
- *         description: Server error
- */
-router.post('/get', ReraController.getProjectByToken);
-
-/**
- * @swagger
  * /api/rera/auto:
  *   post:
  *     summary: Get project details using auto-refreshed token (no token required)
@@ -128,22 +23,59 @@ router.post('/get', ReraController.getProjectByToken);
  *           schema:
  *             type: object
  *             required:
- *               - reraNo
+ *               - projectId
  *             properties:
+ *               projectId:
+ *                 type: integer
+ *                 description: Internal project ID
+ *                 example: 3416
  *               reraNo:
  *                 type: string
- *                 description: RERA registration number
- *                 example: "P52100053447"
+ *                 description: RERA registration number (optional, used for persistence)
+ *                 example: "P52100000432"
  *     responses:
  *       200:
  *         description: Full project details
  *       400:
- *         description: Missing reraNo
+ *         description: Missing projectId
  *       404:
  *         description: Project not found
  *       500:
  *         description: Server error
  */
 router.post('/auto', ReraController.getProjectAuto);
+
+/**
+ * @swagger
+ * /api/rera/document:
+ *   post:
+ *     summary: Download a MahaRERA DMS document
+ *     tags: [RERA]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - documentId
+ *             properties:
+ *               documentId:
+ *                 type: string
+ *                 description: DMS document reference ID
+ *                 example: "61618a44-58ac-4dba-a5f4-66b548ceb3ae"
+ *               fileName:
+ *                 type: string
+ *                 description: Optional file name for content disposition
+ *                 example: "Pan card.pdf"
+ *     responses:
+ *       200:
+ *         description: Document bytes
+ *       400:
+ *         description: Missing documentId
+ *       500:
+ *         description: Server error
+ */
+router.post('/document', ReraController.downloadDocument);
 
 export const reraRouter = router;

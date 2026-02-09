@@ -80,9 +80,22 @@ export class ReraService {
     return response.data;
   }
 
-  static async fetchProjectDetails(projectId: string, captchaText: string | null, reraNo: string) {
-    const client = await SessionManager.getClient();
+  static async fetchProjectDetails(projectId: string, captchaText: string | null, reraNo?: string) {
     const projectIdInt = this.toInt(projectId);
+
+    if (projectIdInt) {
+      const cachedProject = await prisma.reraProject.findUnique({
+        where: { projectId: projectIdInt },
+        select: { apiResponseJson: true, rawResponses: true }
+      });
+
+      const cachedResponse = cachedProject?.apiResponseJson ?? cachedProject?.rawResponses;
+      if (cachedResponse) {
+        return cachedResponse;
+      }
+    }
+
+    const client = await SessionManager.getClient();
 
     // 1. Verify Captcha (only if provided)
     if (captchaText && captchaText !== 'DUMMY') {
@@ -166,10 +179,11 @@ export class ReraService {
     }, {});
 
     // 3. Store in DB
-    return await this.saveStructuredProjectData(aggregatedResponse, projectIdInt, reraNo);
+    await this.saveStructuredProjectData(aggregatedResponse, projectIdInt, reraNo);
+    return aggregatedResponse;
   }
 
-  private static async saveStructuredProjectData(aggregatedResponse: any, projectId: number | undefined, reraNo: string) {
+  private static async saveStructuredProjectData(aggregatedResponse: any, projectId: number | undefined, reraNo?: string) {
     if (!projectId) {
       throw new Error('Invalid projectId. Unable to persist structured data.');
     }
@@ -209,7 +223,7 @@ export class ReraService {
           projectStatusName: generalPayload.projectStatusName ?? null,
           projectCurrentStatus: generalPayload.projectCurrentStatus ?? null,
           projectLocationName: generalPayload.projectLocationName ?? null,
-          registrationCertificateDmsRefNo: generalPayload.registrationCertificateDmsRefNo ?? null,
+          registrationCertificateDMSRefNo: generalPayload.registrationCertificateDmsRefNo ?? generalPayload.registrationCertificateDMSRefNo ?? null,
           registrationCertificateFileName: generalPayload.registrationCertificateFileName ?? null,
           originalProjectProposeCompletionDate: this.toDate(generalPayload.originalProjectProposeCompletionDate),
           registrationCertificateGenerationDate: this.toDate(generalPayload.registrationCertificateGenerationDate),
@@ -218,7 +232,7 @@ export class ReraService {
           isProjectAffiliatedPublicAuthority: this.toBool(generalPayload.isProjectAffiliatedPublicAuthority),
           projectAffiliatedPublicAuthorityName: generalPayload.projectAffiliatedPublicAuthorityName ?? null,
           noOfConsent: this.toInt(generalPayload.noOfConsent),
-          consentProofDmsRefNo: generalPayload.consentProofDmsRefNo ?? null,
+          consentProofDMSRefNo: generalPayload.consentProofDmsRefNo ?? generalPayload.consentProofDMSRefNo ?? null,
           consentProofFileName: generalPayload.consentProofFileName ?? null,
           userName: generalPayload.userName ?? null,
           currentSaleCount: this.toInt(generalPayload.currentSaleCount),
@@ -235,11 +249,11 @@ export class ReraService {
           isMigrated: this.toFlag(generalPayload.isMigrated),
           projectFeesPayableAmount: this.toDecimal(generalPayload.projectFeesPayableAmount),
           realEstateAgentRERARegNo: generalPayload.realEstateAgentRERARegNo ?? null,
-          extensionCertificateDmsRefNo: generalPayload.extensionCertificateDmsRefNo ?? null,
+          extensionCertificateDMSRefNo: generalPayload.extensionCertificateDmsRefNo ?? generalPayload.extensionCertificateDMSRefNo ?? null,
           extensionCertificateFileName: generalPayload.extensionCertificateFileName ?? null,
           moduleName: generalPayload.moduleName ?? null,
           projectCalculatedGrossFeesApplicable: this.toDecimal(generalPayload.projectCalculatedGrossFeesApplicable),
-          receiptDmsRefNo: generalPayload.receiptDmsRefNo ?? null,
+          receiptDMSRefNo: generalPayload.receiptDmsRefNo ?? generalPayload.receiptDMSRefNo ?? null,
           receiptFileName: generalPayload.receiptFileName ?? null,
           projectFormSummaryId: this.toInt(generalPayload.projectFormSummaryId),
           isPromoter: this.toBool(generalPayload.isPromoter),
@@ -257,6 +271,12 @@ export class ReraService {
           isActive: this.toBool(generalPayload.isActive)
         }
       : null;
+
+    const resolvedReraNo = (reraNo && reraNo.trim()) || generalData?.projectRegistartionNo || null;
+
+    if (!resolvedReraNo) {
+      throw new Error('Unable to determine reraNo. Provide reraNo or ensure projectRegistartionNo is available.');
+    }
 
     const statusCore = statusPayload?.coreStatus || statusPayload;
     const statusData = statusCore
@@ -343,8 +363,8 @@ export class ReraService {
       designation: item.designation ?? null,
       companyEntityName: item.companyEntityName ?? null,
       panNumber: item.panNumber ?? null,
-      photographDmsRefNo: item.photographDmsRefNo ?? null,
-      photographDmsFileName: item.photographDmsFileName ?? null,
+      photographDMSRefNo: item.photographDmsRefNo ?? item.photographDMSRefNo ?? null,
+      photographDMSFileName: item.photographDmsFileName ?? item.photographDMSFileName ?? null,
       mobileNumber: item.mobileNumber ?? null,
       alternateMobileNumber: item.alternateMobileNumber ?? null,
       emailId: item.emailId ?? null,
@@ -364,7 +384,7 @@ export class ReraService {
       districtName: item.districtName ?? null,
       talukaName: item.talukaName ?? null,
       villageName: item.villageName ?? null,
-      proofDocDmsRefNo: item.proofDocDmsRefNo ?? null,
+      proofDocDMSRefNo: item.proofDocDmsRefNo ?? item.proofDocDMSRefNo ?? null,
       proofDocFileName: item.proofDocFileName ?? null,
       officeLandlineNumber: item.officeLandlineNumber ?? null,
       isAuthorizedFormB: this.toFlag(item.isAuthorizedFormB)
@@ -430,11 +450,11 @@ export class ReraService {
       ccIssuedEntityName: item.ccIssuedEntityName ?? null,
       ccIssuedDate: this.toDate(item.ccIssuedDate),
       ccIssuedTo: item.ccIssuedTo ?? null,
-      ccDocumentDmsRefNo: item.ccDocumentDmsRefNo ?? null,
+      ccDocumentDMSRefNo: item.ccDocumentDmsRefNo ?? item.ccDocumentDMSRefNo ?? null,
       ccDocumentFileName: item.ccDocumentFileName ?? null,
       isCcYearOld: this.toBool(item.isCcYearOld),
       additionalCcDocumentTypeId: this.toInt(item.additionalCcDocumentTypeId),
-      additionalCcDocumentDmsRefNo: item.additionalCcDocumentDmsRefNo ?? null,
+      additionalCcDocumentDMSRefNo: item.additionalCcDocumentDmsRefNo ?? item.additionalCcDocumentDMSRefNo ?? null,
       additionalCcDocumentFileName: item.additionalCcDocumentFileName ?? null,
       uploadDate: this.toDate(item.uploadDate),
       createdBy: item.createdBy ?? null,
@@ -538,7 +558,7 @@ export class ReraService {
       authorizedSignatoryName: item.authorizedSignatoryName ?? null,
       certificateDate: this.toDate(item.certificateDate),
       issuingAuthority: item.issuingAuthority ?? null,
-      documentDmsRefNo: item.documentDmsRefNo ?? null,
+      documentDMSRefNo: item.documentDmsRefNo ?? item.documentDMSRefNo ?? null,
       documentFileName: item.documentFileName ?? null,
       currentUpdateMode: this.toInt(item.currentUpdateMode),
       isActive: this.toFlag(item.isActive),
@@ -548,16 +568,18 @@ export class ReraService {
 
     return await prisma.$transaction(async (tx) => {
       const project = await tx.reraProject.upsert({
-        where: { reraNumber: reraNo },
+        where: { reraNumber: resolvedReraNo },
         update: {
           projectId,
           rawResponses: aggregatedResponse,
+          apiResponseJson: aggregatedResponse,
           projectName: generalData?.projectName || null
         },
         create: {
-          reraNumber: reraNo,
+          reraNumber: resolvedReraNo,
           projectId,
           rawResponses: aggregatedResponse,
+          apiResponseJson: aggregatedResponse,
           projectName: generalData?.projectName || null
         }
       });
@@ -630,6 +652,6 @@ export class ReraService {
       }
 
       return project;
-    });
+    }, { maxWait: 30000, timeout: 120000 });
   }
 }
