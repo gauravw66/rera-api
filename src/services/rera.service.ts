@@ -3,9 +3,13 @@ import prisma from '../prisma/client';
 import { Prisma } from '@prisma/client';
 import { TokenRefreshService } from '../utils/token.refresh.service';
 import { config } from '../configs/env.config';
+import axios from 'axios';
+import https from 'https';
 
 export class ReraService {
   private static BASE_URL = config.mahaReraBaseUrl;
+  private static SITE_BASE_URL = 'https://maharera.maharashtra.gov.in';
+  private static SITE_HTTP_AGENT = new https.Agent({ keepAlive: true });
 
   private static toInt(value: any): number | undefined {
     if (value === null || value === undefined || value === '') return undefined;
@@ -47,6 +51,13 @@ export class ReraService {
     return Number.isNaN(parsed) ? undefined : parsed;
   }
 
+  private static normalizeUuid(value: any): string | null {
+    if (value === null || value === undefined || value === '') return null;
+    const text = String(value).trim();
+    const match = text.match(/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/);
+    return match ? match[0] : null;
+  }
+
   private static unwrapResponse(data: any): any {
     if (!data) return null;
     if (data.responseObject !== undefined) return data.responseObject;
@@ -67,6 +78,208 @@ export class ReraService {
       response: { status: 400 },
       message: 'Search by RERA Number is not supported. Please provide projectId directly.'
     };
+  }
+
+  static async listProjectsByPincode(pincode: string, options?: { includeRevoked?: boolean }) {
+    const normalized = String(pincode ?? '').trim();
+    if (!normalized) {
+      throw new Error('pincode is required');
+    }
+
+    const landRows = await prisma.reraProject_Land_Address.findMany({
+      where: { pinCode: normalized },
+      select: { projectId: true },
+      distinct: ['projectId']
+    });
+
+    const projectIds = landRows
+      .map(row => row.projectId)
+      .filter((value): value is number => typeof value === 'number');
+
+    if (projectIds.length === 0) {
+      return [] as Array<{ projectId: number; reraNumber: string | null }>;
+    }
+
+    let filteredProjectIds = projectIds;
+    if (!options?.includeRevoked) {
+      const statusRows = await prisma.reraProject_Status.findMany({
+        where: { projectId: { in: projectIds } },
+        select: { projectId: true, isDeregistered: true, statusName: true }
+      });
+
+      const revokedIds = new Set(
+        statusRows
+          .filter(row => row.isDeregistered === 1 || row.statusName?.toLowerCase().includes('revoked'))
+          .map(row => row.projectId)
+      );
+
+      filteredProjectIds = projectIds.filter(projectId => !revokedIds.has(projectId));
+    }
+
+    if (filteredProjectIds.length === 0) {
+      return [] as Array<{ projectId: number; reraNumber: string | null }>;
+    }
+
+    const [projects, generalRows] = await Promise.all([
+      prisma.reraProject.findMany({
+        where: { projectId: { in: filteredProjectIds } },
+        select: { projectId: true, reraNumber: true }
+      }),
+      prisma.reraProject_General.findMany({
+        where: { projectId: { in: filteredProjectIds } },
+        select: { projectId: true, projectRegistartionNo: true }
+      })
+    ]);
+
+    const reraByProjectId = new Map<number, string>();
+    for (const row of generalRows) {
+      if (row.projectRegistartionNo) {
+        reraByProjectId.set(row.projectId, row.projectRegistartionNo);
+      }
+    }
+    for (const row of projects) {
+      if (row.reraNumber) {
+        reraByProjectId.set(row.projectId, row.reraNumber);
+      }
+    }
+
+    return filteredProjectIds.map(projectId => ({
+      projectId,
+      reraNumber: reraByProjectId.get(projectId) ?? null
+    }));
+  }
+
+  private static buildMahaReraSearchUrl(pincode: string, page: number, projectType: number) {
+    const params = new URLSearchParams({
+      project_type: String(projectType),
+      project_name: '',
+      project_location: pincode,
+      project_completion_date: '',
+      project_state: '27',
+      project_district: '0',
+      carpetAreas: '',
+      completionPercentages: '',
+      project_division: '',
+      page: String(page),
+      op: 'Search'
+    });
+
+    return `${this.SITE_BASE_URL}/projects-search-result?${params.toString()}`;
+  }
+
+  private static extractMaxPage(html: string): number {
+    let maxPage = 1;
+    const optionRegex = /<option value="(\d+)"/g;
+    let match = optionRegex.exec(html);
+    while (match) {
+      const pageValue = this.toInt(match[1]);
+      if (pageValue && pageValue > maxPage) {
+        maxPage = pageValue;
+      }
+      match = optionRegex.exec(html);
+    }
+
+    if (maxPage > 1) {
+      return maxPage;
+    }
+
+    const currentDataMatch = html.match(/data-current-data="(\d+)"/);
+    const fallback = this.toInt(currentDataMatch?.[1]);
+    return fallback && fallback > 0 ? fallback : 1;
+  }
+
+  private static extractProjectsFromHtml(html: string) {
+    const results: Array<{ projectId: number; reraNumber: string }> = [];
+    const cardRegex = /<div class="row shadow[\s\S]*?<p class="p-0">#\s*([^<]+)<\/p>[\s\S]*?\/public\/project\/view\/(\d+)/g;
+    let match = cardRegex.exec(html);
+    while (match) {
+      const reraNumber = match[1]?.trim();
+      const projectId = this.toInt(match[2]);
+      if (reraNumber && projectId) {
+        results.push({ projectId, reraNumber });
+      }
+      match = cardRegex.exec(html);
+    }
+    return results;
+  }
+
+  private static async delay(ms: number) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  private static async fetchMahaReraSearchPage(pincode: string, page: number, projectType: number) {
+    const url = this.buildMahaReraSearchUrl(pincode, page, projectType);
+    const headers = {
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+      'Accept-Language': 'en-IN,en-GB;q=0.9,en-US;q=0.8,en;q=0.7',
+      'Referer': `${this.SITE_BASE_URL}/projects-search-result`,
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36'
+    };
+
+    const maxAttempts = 3;
+    let lastError: any;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        const response = await axios.get(url, {
+          headers,
+          responseType: 'text',
+          timeout: 15000,
+          httpsAgent: this.SITE_HTTP_AGENT,
+          maxRedirects: 5
+        });
+
+        const html = typeof response.data === 'string' ? response.data : String(response.data ?? '');
+        return {
+          html,
+          projects: this.extractProjectsFromHtml(html),
+          maxPages: this.extractMaxPage(html)
+        };
+      } catch (error: any) {
+        lastError = error;
+        const code = error?.code;
+        const isRetryable = code === 'ECONNRESET' || code === 'ETIMEDOUT' || code === 'ECONNABORTED';
+        if (!isRetryable || attempt === maxAttempts) {
+          throw error;
+        }
+        await this.delay(500 * attempt);
+      }
+    }
+
+    throw lastError;
+  }
+
+  static async listProjectsByPincodeLive(
+    pincode: string,
+    options?: { includeRevoked?: boolean; maxPages?: number }
+  ) {
+    const normalized = String(pincode ?? '').trim();
+    if (!normalized) {
+      throw new Error('pincode is required');
+    }
+
+    const projectTypes = options?.includeRevoked ? [0, 1] : [0];
+    const deduped = new Map<number, { projectId: number; reraNumber: string }>();
+
+    for (const projectType of projectTypes) {
+      const firstPage = await this.fetchMahaReraSearchPage(normalized, 1, projectType);
+      for (const item of firstPage.projects) {
+        deduped.set(item.projectId, item);
+      }
+
+      const maxPage = options?.maxPages
+        ? Math.min(options.maxPages, firstPage.maxPages)
+        : firstPage.maxPages;
+
+      for (let page = 2; page <= maxPage; page += 1) {
+        const pageData = await this.fetchMahaReraSearchPage(normalized, page, projectType);
+        for (const item of pageData.projects) {
+          deduped.set(item.projectId, item);
+        }
+      }
+    }
+
+    return Array.from(deduped.values());
   }
 
   static async getCaptcha() {
@@ -223,7 +436,9 @@ export class ReraService {
           projectStatusName: generalPayload.projectStatusName ?? null,
           projectCurrentStatus: generalPayload.projectCurrentStatus ?? null,
           projectLocationName: generalPayload.projectLocationName ?? null,
-          registrationCertificateDMSRefNo: generalPayload.registrationCertificateDmsRefNo ?? generalPayload.registrationCertificateDMSRefNo ?? null,
+          registrationCertificateDMSRefNo: this.normalizeUuid(
+            generalPayload.registrationCertificateDmsRefNo ?? generalPayload.registrationCertificateDMSRefNo
+          ),
           registrationCertificateFileName: generalPayload.registrationCertificateFileName ?? null,
           originalProjectProposeCompletionDate: this.toDate(generalPayload.originalProjectProposeCompletionDate),
           registrationCertificateGenerationDate: this.toDate(generalPayload.registrationCertificateGenerationDate),
@@ -232,7 +447,9 @@ export class ReraService {
           isProjectAffiliatedPublicAuthority: this.toBool(generalPayload.isProjectAffiliatedPublicAuthority),
           projectAffiliatedPublicAuthorityName: generalPayload.projectAffiliatedPublicAuthorityName ?? null,
           noOfConsent: this.toInt(generalPayload.noOfConsent),
-          consentProofDMSRefNo: generalPayload.consentProofDmsRefNo ?? generalPayload.consentProofDMSRefNo ?? null,
+          consentProofDMSRefNo: this.normalizeUuid(
+            generalPayload.consentProofDmsRefNo ?? generalPayload.consentProofDMSRefNo
+          ),
           consentProofFileName: generalPayload.consentProofFileName ?? null,
           userName: generalPayload.userName ?? null,
           currentSaleCount: this.toInt(generalPayload.currentSaleCount),
@@ -249,11 +466,15 @@ export class ReraService {
           isMigrated: this.toFlag(generalPayload.isMigrated),
           projectFeesPayableAmount: this.toDecimal(generalPayload.projectFeesPayableAmount),
           realEstateAgentRERARegNo: generalPayload.realEstateAgentRERARegNo ?? null,
-          extensionCertificateDMSRefNo: generalPayload.extensionCertificateDmsRefNo ?? generalPayload.extensionCertificateDMSRefNo ?? null,
+          extensionCertificateDMSRefNo: this.normalizeUuid(
+            generalPayload.extensionCertificateDmsRefNo ?? generalPayload.extensionCertificateDMSRefNo
+          ),
           extensionCertificateFileName: generalPayload.extensionCertificateFileName ?? null,
           moduleName: generalPayload.moduleName ?? null,
           projectCalculatedGrossFeesApplicable: this.toDecimal(generalPayload.projectCalculatedGrossFeesApplicable),
-          receiptDMSRefNo: generalPayload.receiptDmsRefNo ?? generalPayload.receiptDMSRefNo ?? null,
+          receiptDMSRefNo: this.normalizeUuid(
+            generalPayload.receiptDmsRefNo ?? generalPayload.receiptDMSRefNo
+          ),
           receiptFileName: generalPayload.receiptFileName ?? null,
           projectFormSummaryId: this.toInt(generalPayload.projectFormSummaryId),
           isPromoter: this.toBool(generalPayload.isPromoter),
@@ -363,7 +584,7 @@ export class ReraService {
       designation: item.designation ?? null,
       companyEntityName: item.companyEntityName ?? null,
       panNumber: item.panNumber ?? null,
-      photographDMSRefNo: item.photographDmsRefNo ?? item.photographDMSRefNo ?? null,
+      photographDMSRefNo: this.normalizeUuid(item.photographDmsRefNo ?? item.photographDMSRefNo),
       photographDMSFileName: item.photographDmsFileName ?? item.photographDMSFileName ?? null,
       mobileNumber: item.mobileNumber ?? null,
       alternateMobileNumber: item.alternateMobileNumber ?? null,
@@ -384,7 +605,7 @@ export class ReraService {
       districtName: item.districtName ?? null,
       talukaName: item.talukaName ?? null,
       villageName: item.villageName ?? null,
-      proofDocDMSRefNo: item.proofDocDmsRefNo ?? item.proofDocDMSRefNo ?? null,
+      proofDocDMSRefNo: this.normalizeUuid(item.proofDocDmsRefNo ?? item.proofDocDMSRefNo),
       proofDocFileName: item.proofDocFileName ?? null,
       officeLandlineNumber: item.officeLandlineNumber ?? null,
       isAuthorizedFormB: this.toFlag(item.isAuthorizedFormB)
@@ -410,7 +631,7 @@ export class ReraService {
       caIcaiMembershipNo: item.caIcaiMembershipNo ?? null,
       other: item.other ?? null,
       panCardNo: item.panCardNo ?? null,
-      photographnDMSRefNo: item.photographnDMSRefNo ?? null,
+      photographnDMSRefNo: this.normalizeUuid(item.photographnDMSRefNo),
       photographnDMSFileName: item.photographnDMSFileName ?? null,
       primaryContactNo: item.primaryContactNo ?? null,
       alternateContactNo: item.alternateContactNo ?? null,
@@ -450,11 +671,13 @@ export class ReraService {
       ccIssuedEntityName: item.ccIssuedEntityName ?? null,
       ccIssuedDate: this.toDate(item.ccIssuedDate),
       ccIssuedTo: item.ccIssuedTo ?? null,
-      ccDocumentDMSRefNo: item.ccDocumentDmsRefNo ?? item.ccDocumentDMSRefNo ?? null,
+      ccDocumentDMSRefNo: this.normalizeUuid(item.ccDocumentDmsRefNo ?? item.ccDocumentDMSRefNo),
       ccDocumentFileName: item.ccDocumentFileName ?? null,
       isCcYearOld: this.toBool(item.isCcYearOld),
       additionalCcDocumentTypeId: this.toInt(item.additionalCcDocumentTypeId),
-      additionalCcDocumentDMSRefNo: item.additionalCcDocumentDmsRefNo ?? item.additionalCcDocumentDMSRefNo ?? null,
+      additionalCcDocumentDMSRefNo: this.normalizeUuid(
+        item.additionalCcDocumentDmsRefNo ?? item.additionalCcDocumentDMSRefNo
+      ),
       additionalCcDocumentFileName: item.additionalCcDocumentFileName ?? null,
       uploadDate: this.toDate(item.uploadDate),
       createdBy: item.createdBy ?? null,
@@ -464,7 +687,7 @@ export class ReraService {
     const migratedDocsList = this.asArray(migratedDocsPayload).map((item) => ({
       projectId: this.toInt(item.projectId) ?? projectId,
       documentName: item.documentName ?? null,
-      userDocumentDMSRefNo: item.userDocumentDMSRefNo ?? null,
+      userDocumentDMSRefNo: this.normalizeUuid(item.userDocumentDMSRefNo),
       documentFileName: item.documentFileName ?? null,
       createdDate: this.toDate(item.createdDate)
     }));
@@ -558,7 +781,7 @@ export class ReraService {
       authorizedSignatoryName: item.authorizedSignatoryName ?? null,
       certificateDate: this.toDate(item.certificateDate),
       issuingAuthority: item.issuingAuthority ?? null,
-      documentDMSRefNo: item.documentDmsRefNo ?? item.documentDMSRefNo ?? null,
+      documentDMSRefNo: this.normalizeUuid(item.documentDmsRefNo ?? item.documentDMSRefNo),
       documentFileName: item.documentFileName ?? null,
       currentUpdateMode: this.toInt(item.currentUpdateMode),
       isActive: this.toFlag(item.isActive),

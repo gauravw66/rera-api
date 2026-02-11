@@ -26,6 +26,7 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "set-token": "ts-node src/set-token.ts",
+    "auto-bulk-cli": "ts-node src/scripts/auto-bulk-cli.ts",
     "prisma:generate": "prisma generate --schema=src/prisma/schema.prisma",
     "prisma:push": "prisma db push --schema=src/prisma/schema.prisma"
   },

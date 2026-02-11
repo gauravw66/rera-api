@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { ReraService } from '../../services/rera.service';
 import { SessionManager } from '../../utils/session.manager';
+import prisma from '../../prisma/client';
 
 export class ReraController {
   static async search(req: Request, res: Response) {
@@ -10,6 +11,44 @@ export class ReraController {
     }
     const project = await ReraService.searchByReraNo(reraNo);
     res.json(project);
+  }
+
+  static async listByPincode(req: Request, res: Response) {
+    const { pincode } = req.params;
+    const includeRevoked = String(req.query.includeRevoked ?? 'false').toLowerCase() === 'true';
+
+    if (!pincode || typeof pincode !== 'string') {
+      return res.status(400).json({ message: 'Valid pincode is required' });
+    }
+
+    try {
+      const projects = await ReraService.listProjectsByPincode(pincode, { includeRevoked });
+      res.json(projects);
+    } catch (error: any) {
+      res.status(500).json({ message: 'Error fetching projects by pincode', error: error.message });
+    }
+  }
+
+  static async listByPincodeLive(req: Request, res: Response) {
+    const { pincode } = req.params;
+    const includeRevoked = String(req.query.includeRevoked ?? 'false').toLowerCase() === 'true';
+    const maxPagesRaw = req.query.maxPages;
+    const maxPages = maxPagesRaw ? Number.parseInt(String(maxPagesRaw), 10) : undefined;
+
+    if (!pincode || typeof pincode !== 'string') {
+      return res.status(400).json({ message: 'Valid pincode is required' });
+    }
+
+    if (maxPages !== undefined && (Number.isNaN(maxPages) || maxPages <= 0)) {
+      return res.status(400).json({ message: 'maxPages must be a positive integer' });
+    }
+
+    try {
+      const projects = await ReraService.listProjectsByPincodeLive(pincode, { includeRevoked, maxPages });
+      res.json(projects);
+    } catch (error: any) {
+      res.status(500).json({ message: 'Error fetching live projects by pincode', error: error.message });
+    }
   }
 
   static async getCaptcha(req: Request, res: Response) {
@@ -161,6 +200,105 @@ export class ReraController {
         error: error.message 
       });
     }
+  }
+
+  static async bulkAuto(req: Request, res: Response) {
+    const body = req.body;
+    const inputProjects = Array.isArray(body) ? body : body?.projects;
+    const startIndexRaw = body?.startIndex ?? 0;
+    const limitRaw = body?.limit;
+    const delayMsRaw = body?.delayMs ?? 300;
+
+    if (!Array.isArray(inputProjects)) {
+      return res.status(400).json({
+        message: 'Provide an array of projects or a { projects: [...] } payload.'
+      });
+    }
+
+    const startIndex = Number.parseInt(String(startIndexRaw), 10);
+    const limit = limitRaw !== undefined ? Number.parseInt(String(limitRaw), 10) : undefined;
+    const delayMs = Number.parseInt(String(delayMsRaw), 10);
+
+    if (Number.isNaN(startIndex) || startIndex < 0) {
+      return res.status(400).json({ message: 'startIndex must be a non-negative integer' });
+    }
+    if (limit !== undefined && (Number.isNaN(limit) || limit <= 0)) {
+      return res.status(400).json({ message: 'limit must be a positive integer' });
+    }
+    if (Number.isNaN(delayMs) || delayMs < 0) {
+      return res.status(400).json({ message: 'delayMs must be a non-negative integer' });
+    }
+
+    const shouldSlice = Array.isArray(body) || body?.sliceOnServer === true || limit !== undefined;
+    const sliceEnd = limit ? startIndex + limit : inputProjects.length;
+    const projects = shouldSlice ? inputProjects.slice(startIndex, sliceEnd) : inputProjects;
+
+    const failures: Array<{ index: number; projectId?: string | number; reraNumber?: string; error: string }> = [];
+    const results: Array<{ index: number; projectId?: number; reraNumber?: string; status: 'success' | 'skipped' | 'failed'; error?: string }> = [];
+    let successCount = 0;
+    let skippedCount = 0;
+
+    const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+    for (let offset = 0; offset < projects.length; offset += 1) {
+      const index = startIndex + offset;
+      const item = projects[offset] ?? {};
+      const projectId = item.projectId ?? item.project_id ?? item.id;
+      const reraNumber = item.reraNumber ?? item.reraNo ?? item.rera_no;
+      const projectIdNumber = Number.parseInt(String(projectId), 10);
+
+      if (Number.isNaN(projectIdNumber)) {
+        const errorMessage = 'projectId must be a valid integer';
+        failures.push({ index, projectId, reraNumber, error: errorMessage });
+        results.push({ index, projectId: undefined, reraNumber, status: 'failed', error: errorMessage });
+        continue;
+      }
+
+      if (!projectId) {
+        failures.push({ index, projectId, reraNumber, error: 'projectId is required' });
+        continue;
+      }
+
+      try {
+        const existing = await prisma.reraProject.findUnique({
+          where: { projectId: projectIdNumber },
+          select: { projectId: true, apiResponseJson: true, rawResponses: true }
+        });
+
+        if (existing && (existing.apiResponseJson || existing.rawResponses)) {
+          skippedCount += 1;
+          results.push({ index, projectId: projectIdNumber, reraNumber, status: 'skipped' });
+          continue;
+        }
+
+        await ReraService.fetchProjectDetails(String(projectIdNumber), null, reraNumber);
+        successCount += 1;
+        results.push({ index, projectId: projectIdNumber, reraNumber, status: 'success' });
+      } catch (error: any) {
+        const errorMessage = error.message || 'Unknown error';
+        failures.push({
+          index,
+          projectId: projectIdNumber,
+          reraNumber,
+          error: errorMessage
+        });
+        results.push({ index, projectId: projectIdNumber, reraNumber, status: 'failed', error: errorMessage });
+      }
+
+      if (delayMs > 0 && offset < projects.length - 1) {
+        await sleep(delayMs);
+      }
+    }
+
+    res.json({
+      total: inputProjects.length,
+      processed: projects.length,
+      successCount,
+      skippedCount,
+      failureCount: failures.length,
+      failures,
+      results
+    });
   }
 
   /**
